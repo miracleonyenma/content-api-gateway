@@ -58,6 +58,14 @@ functions:
           path: /admin/users/{action}
           method: POST
           cors: true
+  # The authorizer function configuration
+  # timeout: 30 seconds to handle Permit.io API calls
+  # This function doesn't need HTTP events because it's called internally by API Gateway
+
+  # The main API handler
+  # {proxy+} captures all paths and forwards them to our handler
+  # The authorizer configuration tells API Gateway to check permissions first
+  # identitySource tells API Gateway where to find the auth token
 
 custom:
   serverless-offline:
