@@ -1,0 +1,24 @@
+{
+  "name": "content-api-gateway",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.11.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.17.1",
+    "permitio": "^2.7.5"
+  },
+  "devDependencies": {
+    "serverless": "^4.18.0",
+    "serverless-dotenv-plugin": "^6.0.0",
+    "serverless-offline": "^14.4.0"
+  }
+}

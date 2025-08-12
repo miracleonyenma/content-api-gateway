@@ -1,0 +1,71 @@
+# ./serverless.yml
+
+service: content-management-api
+
+frameworkVersion: "4"
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  environment:
+    PERMIT_API_KEY: ${env:PERMIT_API_KEY}
+    PERMIT_PDP_URL: ${env:PERMIT_PDP_URL}
+    JWT_SECRET: ${env:JWT_SECRET}
+    MONGODB_URI: ${env:MONGODB_URI}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: "arn:aws:logs:*:*:*"
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+functions:
+  # Custom Authorizer
+  authorizer:
+    handler: src/functions/authorizer.handler
+    timeout: 30
+
+  # Main API Handler
+  contentHandler:
+    handler: src/functions/handler.handler
+    timeout: 30
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          authorizer:
+            name: authorizer
+            type: request
+            identitySource: method.request.header.Authorization
+          cors: true
+
+  # User Management
+  userSync:
+    handler: src/functions/user-sync.handler
+    timeout: 30
+    events:
+      - http:
+          path: /admin/users/{action}
+          method: POST
+          cors: true
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+    reloadHandler: true
+
+package:
+  exclude:
+    - node_modules/aws-sdk/**
+    - .env
+    - test-*.js
