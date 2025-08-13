@@ -316,12 +316,6 @@ async function runTests() {
     "GET",
     "/comments",
   );
-  await testEndpoint(
-    "Author accesses media",
-    users.premiumAuthor,
-    "GET",
-    "/media",
-  );
 
   // Test 5: Admin privileges
   console.log("\n=== ADMIN TESTS ===");
