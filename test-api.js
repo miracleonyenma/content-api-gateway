@@ -4,10 +4,10 @@ const axios = require("axios");
 const jwt = require("jsonwebtoken");
 
 // Replace with your deployed API endpoint
-const API_BASE = "http://localhost:3000"; // For local testing
+const API_BASE = "http://localhost:3000/dev"; // For local testing with dev stage
 // const API_BASE = 'https://your-api-id.execute-api.us-east-1.amazonaws.com/dev'; // For deployed API
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = "your-super-secret-jwt-key-here";
 
 // Create test tokens for different user types
 const createToken = (user) => {
@@ -237,13 +237,44 @@ async function runTests() {
       },
     );
 
-    // Create another author to test ownership
+    // Create and sync another author to test ownership
     const anotherAuthorToken = createToken({
       userId: "author2",
       email: "author2@example.com",
       role: "author",
       subscription_tier: "free",
     });
+
+    // Sync the second author user
+    await testEndpoint(
+      "Sync author2 user",
+      users.admin,
+      "POST",
+      "/admin/users/sync",
+      {
+        action: "sync",
+        userData: {
+          userId: "author2",
+          email: "author2@example.com",
+          role: "author",
+          subscriptionTier: "free",
+          firstName: "Jane",
+          lastName: "Author2",
+        },
+      },
+    );
+
+    // Assign role to author2
+    await testEndpoint(
+      "Assign role to author2",
+      users.admin,
+      "POST",
+      "/admin/users/assign-role",
+      {
+        action: "assign-role",
+        userData: { userId: "author2", role: "author" },
+      },
+    );
 
     // Different author cannot edit
     await testEndpoint(

@@ -69,12 +69,26 @@ exports.handler = async (event) => {
 
 async function handleArticles(method, params = {}, body, context) {
   const { userId, role } = context;
+  
+  // Extract article ID from path parameters
+  const getArticleIdFromPath = () => {
+    if (params.proxy) {
+      const pathParts = params.proxy.split('/');
+      const articleIndex = pathParts.indexOf('articles');
+      if (articleIndex >= 0 && pathParts[articleIndex + 1] && !['publish'].includes(pathParts[articleIndex + 1])) {
+        return pathParts[articleIndex + 1];
+      }
+    }
+    return params.id || null;
+  };
+  
+  const articleId = getArticleIdFromPath();
 
   switch (method) {
     case "GET":
-      if (params.id) {
+      if (articleId) {
         // Get single article
-        const article = await Article.findById(params.id);
+        const article = await Article.findById(articleId);
         if (!article) {
           return createResponse(404, { error: "Article not found" });
         }
@@ -102,9 +116,12 @@ async function handleArticles(method, params = {}, body, context) {
       }
 
     case "POST":
-      if (params.id && body === null) {
+      if (params.proxy && params.proxy.includes('publish')) {
         // Publish article (POST /articles/{id}/publish)
-        return await publishArticle(params.id, userId, role);
+        const pathParts = params.proxy.split('/');
+        const articleIndex = pathParts.indexOf('articles');
+        const publishArticleId = articleIndex >= 0 ? pathParts[articleIndex + 1] : null;
+        return await publishArticle(publishArticleId, userId, role);
       } else {
         // Create new article
         return await createArticle(body, userId);
@@ -112,11 +129,11 @@ async function handleArticles(method, params = {}, body, context) {
 
     case "PUT":
       // Update article
-      return await updateArticle(params.id, body, userId, role);
+      return await updateArticle(articleId, body, userId, role);
 
     case "DELETE":
       // Delete article
-      return await deleteArticle(params.id, userId, role);
+      return await deleteArticle(articleId, userId, role);
 
     default:
       return createResponse(405, { error: "Method not allowed" });

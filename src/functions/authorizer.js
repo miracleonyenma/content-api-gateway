@@ -36,7 +36,10 @@ exports.handler = async (event) => {
     console.log("🏷️ RBAC Result:", rbacAllowed);
 
     if (!rbacAllowed) {
-      throw new Error("Access denied by RBAC policy");
+      console.log(
+        `🚫 Access denied: User ${user.userId} (${user.role}) cannot perform '${action}' on ${resource}`
+      );
+      throw new Error("Forbidden");
     }
 
     // 2. ABAC: Additional attribute checks (rate limiting handled in main handler)
@@ -175,7 +178,7 @@ function generatePolicy(principalId, effect, resource, context = {}) {
         Object.entries(context).map(([key, value]) => [
           key,
           String(value || ""),
-        ]),
+        ])
       ),
     },
   };

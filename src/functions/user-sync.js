@@ -42,26 +42,55 @@ exports.handler = async (event) => {
         };
 
       case "assign-role":
-        // Assign role to user
-        await permit.api.assignRole({
-          user: userData.userId,
-          role: userData.role,
-          tenant: "default",
-        });
-
-        console.log("✅ Role assigned:", userData.userId, userData.role);
-        return {
-          statusCode: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-          body: JSON.stringify({
-            message: "Role assigned successfully",
-            userId: userData.userId,
+        // Assign role to user with error handling
+        try {
+          await permit.api.assignRole({
+            user: userData.userId,
             role: userData.role,
-          }),
-        };
+            tenant: "default",
+          });
+
+          console.log("✅ Role assigned:", userData.userId, userData.role);
+          return {
+            statusCode: 200,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            },
+            body: JSON.stringify({
+              message: "Role assigned successfully",
+              userId: userData.userId,
+              role: userData.role,
+            }),
+          };
+        } catch (roleError) {
+          console.error(
+            `❌ Failed to assign role '${userData.role}' to user '${userData.userId}':`,
+            roleError.message
+          );
+
+          // If role doesn't exist, provide helpful error message
+          if (
+            roleError.message.includes("role") ||
+            roleError.message.includes("404")
+          ) {
+            return {
+              statusCode: 400,
+              headers: {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+              },
+              body: JSON.stringify({
+                error: `Role '${userData.role}' does not exist in Permit.io. Please create it first.`,
+                userId: userData.userId,
+                role: userData.role,
+              }),
+            };
+          }
+
+          // Re-throw other errors
+          throw roleError;
+        }
 
       default:
         return {
