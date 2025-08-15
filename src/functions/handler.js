@@ -3,6 +3,12 @@
 const mongoose = require("mongoose");
 const Article = require("../models/article");
 const { createResponse } = require("../utils/response");
+const { Permit } = require("permitio");
+
+const permit = new Permit({
+  pdp: process.env.PERMIT_PDP_URL,
+  token: process.env.PERMIT_API_KEY,
+});
 
 // MongoDB connection with reuse across Lambda invocations
 let isConnected = false;
@@ -68,20 +74,24 @@ exports.handler = async (event) => {
 };
 
 async function handleArticles(method, params = {}, body, context) {
-  const { userId, role } = context;
-  
+  const { userId, role, subscription_tier } = context;
+
   // Extract article ID from path parameters
   const getArticleIdFromPath = () => {
     if (params.proxy) {
-      const pathParts = params.proxy.split('/');
-      const articleIndex = pathParts.indexOf('articles');
-      if (articleIndex >= 0 && pathParts[articleIndex + 1] && !['publish'].includes(pathParts[articleIndex + 1])) {
+      const pathParts = params.proxy.split("/");
+      const articleIndex = pathParts.indexOf("articles");
+      if (
+        articleIndex >= 0 &&
+        pathParts[articleIndex + 1] &&
+        !["publish"].includes(pathParts[articleIndex + 1])
+      ) {
         return pathParts[articleIndex + 1];
       }
     }
     return params.id || null;
   };
-  
+
   const articleId = getArticleIdFromPath();
 
   switch (method) {
@@ -93,15 +103,37 @@ async function handleArticles(method, params = {}, body, context) {
           return createResponse(404, { error: "Article not found" });
         }
 
-        // ReBAC: Check if user can view draft articles
-        if (
-          article.status === "draft" &&
-          article.author !== userId &&
-          !["editor", "admin"].includes(role)
-        ) {
-          return createResponse(403, {
-            error: "Cannot view draft articles of other users",
-          });
+        // Use Permit.io to check read permissions (covers both ReBAC and ABAC)
+        const canRead = await permit.check(userId, "read", {
+          type: "Article",
+
+          id: articleId,
+          category: article.category,
+          attributes: {
+            author: article.author,
+            status: article.status,
+            category: article.category,
+          },
+        });
+
+        if (!canRead) {
+          // Determine specific error based on article properties
+          if (article.status === "draft" && article.author !== userId) {
+            return createResponse(403, {
+              error: "Cannot view draft articles of other users",
+            });
+          } else if (
+            article.category === "premium" &&
+            subscription_tier === "free"
+          ) {
+            return createResponse(403, {
+              error: "Premium subscription required to access premium content",
+            });
+          } else {
+            return createResponse(403, {
+              error: "Access denied",
+            });
+          }
         }
 
         return createResponse(200, { article });
@@ -116,11 +148,12 @@ async function handleArticles(method, params = {}, body, context) {
       }
 
     case "POST":
-      if (params.proxy && params.proxy.includes('publish')) {
+      if (params.proxy && params.proxy.includes("publish")) {
         // Publish article (POST /articles/{id}/publish)
-        const pathParts = params.proxy.split('/');
-        const articleIndex = pathParts.indexOf('articles');
-        const publishArticleId = articleIndex >= 0 ? pathParts[articleIndex + 1] : null;
+        const pathParts = params.proxy.split("/");
+        const articleIndex = pathParts.indexOf("articles");
+        const publishArticleId =
+          articleIndex >= 0 ? pathParts[articleIndex + 1] : null;
         return await publishArticle(publishArticleId, userId, role);
       } else {
         // Create new article
@@ -171,8 +204,19 @@ async function updateArticle(articleId, body, userId, role) {
     return createResponse(404, { error: "Article not found" });
   }
 
-  // ReBAC: Check ownership for non-editor/admin users
-  if (article.author !== userId && !["editor", "admin"].includes(role)) {
+  // Use Permit.io to check update permissions (ReBAC - ownership)
+  const canUpdate = await permit.check(userId, "update", {
+    type: "Article",
+
+    id: articleId,
+    attributes: {
+      author: article.author,
+      status: article.status,
+      category: article.category,
+    },
+  });
+
+  if (!canUpdate) {
     return createResponse(403, { error: "Can only edit your own articles" });
   }
 
@@ -198,8 +242,19 @@ async function deleteArticle(articleId, userId, role) {
     return createResponse(404, { error: "Article not found" });
   }
 
-  // ReBAC: Check ownership for non-editor/admin users
-  if (article.author !== userId && !["editor", "admin"].includes(role)) {
+  // Use Permit.io to check delete permissions (ReBAC - ownership)
+  const canDelete = await permit.check(userId, "delete", {
+    type: "Article",
+
+    id: articleId,
+    attributes: {
+      author: article.author,
+      status: article.status,
+      category: article.category,
+    },
+  });
+
+  if (!canDelete) {
     return createResponse(403, { error: "Can only delete your own articles" });
   }
 
@@ -221,10 +276,21 @@ async function publishArticle(articleId, userId, role) {
     return createResponse(404, { error: "Article not found" });
   }
 
-  // Only editors, admins, or article owners can publish
-  if (article.author !== userId && !["editor", "admin"].includes(role)) {
+  // Use Permit.io to check publish permissions
+  const canPublish = await permit.check(userId, "publish", {
+    type: "Article",
+
+    id: articleId,
+    attributes: {
+      author: article.author,
+      status: article.status,
+      category: article.category,
+    },
+  });
+
+  if (!canPublish) {
     return createResponse(403, {
-      error: "Only editors or article owners can publish",
+      error: "Only editors and admins can publish articles",
     });
   }
 
@@ -240,10 +306,20 @@ async function publishArticle(articleId, userId, role) {
 }
 
 async function getFilteredArticles(userId, role) {
+  // For listing, we'll keep the MongoDB filtering for performance
+  // In a more sophisticated setup, you could use permit.check for each article
   const query = {};
 
-  // RBAC: Apply role-based filtering
-  if (!["editor", "admin"].includes(role)) {
+  // Use permit.check for listing permissions
+  const canListAll = await permit.check(userId, "read", {
+    type: "Article",
+
+    attributes: {
+      category: "premium",
+    },
+  });
+
+  if (!canListAll || !["editor", "admin"].includes(role)) {
     // Non-editors see published articles + their own drafts
     query.$or = [{ status: "published" }, { author: userId }];
   }

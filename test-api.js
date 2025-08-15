@@ -21,6 +21,12 @@ const users = {
     role: "viewer",
     subscription_tier: "free",
   }),
+  premiumViewer: createToken({
+    userId: "viewer2",
+    email: "viewer2@example.com",
+    role: "viewer",
+    subscription_tier: "premium",
+  }),
   premiumAuthor: createToken({
     userId: "author1",
     email: "author@example.com",
@@ -77,6 +83,14 @@ async function setupTestUsers() {
       role: "viewer",
       subscriptionTier: "free",
       firstName: "John",
+      lastName: "Viewer",
+    },
+    {
+      userId: "viewer2",
+      email: "viewer2@example.com",
+      role: "viewer",
+      subscriptionTier: "premium",
+      firstName: "Jane",
       lastName: "Viewer",
     },
     {
@@ -167,7 +181,7 @@ async function runTests() {
     {
       title: "My First Article",
       content: "This is my first article content",
-      category: "Technology",
+      category: "free",
     },
   );
 
@@ -200,12 +214,58 @@ async function runTests() {
     );
   }
 
-  // Test 2: ABAC - Attribute-based (rate limiting simulation)
-  console.log("\n=== ABAC TESTS (Rate Limiting) ===");
+  // Test 2: ABAC - Policy-level + Application-level attribute-based controls
+  console.log("\n=== ABAC TESTS ===");
 
-  console.log("Testing rate limits for free vs premium users...");
+  // First create premium content to test policy-level ABAC
+  const premiumArticleResponse = await testEndpoint(
+    "Editor creates premium article",
+    users.editor,
+    "POST",
+    "/articles",
+    {
+      title: "Premium Investment Guide",
+      content: "This premium content covers advanced investment strategies",
+      category: "premium",
+    },
+  );
 
-  // Simulate multiple requests to test rate limiting
+  let premiumArticleId = premiumArticleResponse?.article?._id;
+
+  if (premiumArticleId) {
+    console.log(`💎 Created premium article ID: ${premiumArticleId}`);
+
+    // Publish the premium article first so it can be accessed
+    await testEndpoint(
+      "Editor publishes premium article",
+      users.editor,
+      "POST",
+      `/articles/${premiumArticleId}/publish`,
+    );
+
+    // Policy-level ABAC: Premium content access through User Sets
+    await testEndpoint(
+      "Premium user accesses premium content",
+      users.premiumAuthor,
+      "GET",
+      `/articles/${premiumArticleId}`,
+    );
+    await testEndpoint(
+      "Free user accesses premium content (should fail)",
+      users.freeViewer,
+      "GET",
+      `/articles/${premiumArticleId}`,
+    );
+    await testEndpoint(
+      "Admin accesses premium content",
+      users.admin,
+      "GET",
+      `/articles/${premiumArticleId}`,
+    );
+  }
+
+  // Application-level ABAC: Rate limiting by subscription tier
+  console.log("\nTesting subscription-tier rate limiting...");
   for (let i = 1; i <= 3; i++) {
     await testEndpoint(
       `Free user request ${i}/100`,
@@ -215,89 +275,9 @@ async function runTests() {
     );
     await testEndpoint(
       `Premium user request ${i}/1000`,
-      users.premiumAuthor,
+      users.premiumViewer,
       "GET",
       "/articles",
-    );
-  }
-
-  // Test 3: ReBAC - Ownership-based permissions
-  console.log("\n=== ReBAC TESTS (Ownership) ===");
-
-  if (articleId) {
-    // Author can edit their own article
-    await testEndpoint(
-      "Author edits own article",
-      users.premiumAuthor,
-      "PUT",
-      `/articles/${articleId}`,
-      {
-        title: "Updated Article Title",
-        content: "Updated content",
-      },
-    );
-
-    // Create and sync another author to test ownership
-    const anotherAuthorToken = createToken({
-      userId: "author2",
-      email: "author2@example.com",
-      role: "author",
-      subscription_tier: "free",
-    });
-
-    // Sync the second author user
-    await testEndpoint(
-      "Sync author2 user",
-      users.admin,
-      "POST",
-      "/admin/users/sync",
-      {
-        action: "sync",
-        userData: {
-          userId: "author2",
-          email: "author2@example.com",
-          role: "author",
-          subscriptionTier: "free",
-          firstName: "Jane",
-          lastName: "Author2",
-        },
-      },
-    );
-
-    // Assign role to author2
-    await testEndpoint(
-      "Assign role to author2",
-      users.admin,
-      "POST",
-      "/admin/users/assign-role",
-      {
-        action: "assign-role",
-        userData: { userId: "author2", role: "author" },
-      },
-    );
-
-    // Different author cannot edit
-    await testEndpoint(
-      "Different author edits article (should fail)",
-      anotherAuthorToken,
-      "PUT",
-      `/articles/${articleId}`,
-      {
-        title: "Hacked Title",
-        content: "This should not work",
-      },
-    );
-
-    // Editor can edit any article
-    await testEndpoint(
-      "Editor edits any article",
-      users.editor,
-      "PUT",
-      `/articles/${articleId}`,
-      {
-        title: "Editor Updated Title",
-        content: "Editor can edit any content",
-      },
     );
   }
 

@@ -1,6 +1,8 @@
 // ./src/functions/authorizer.js
 
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+const Article = require("../models/article");
 const { Permit } = require("permitio");
 
 const permit = new Permit({
@@ -37,17 +39,57 @@ exports.handler = async (event) => {
 
     if (!rbacAllowed) {
       console.log(
-        `🚫 Access denied: User ${user.userId} (${user.role}) cannot perform '${action}' on ${resource}`
+        `🚫 Access denied: User ${user.userId} (${user.role}) cannot perform '${action}' on ${resource?.type}`,
       );
       throw new Error("Forbidden");
     }
 
-    // 2. ABAC: Additional attribute checks (rate limiting handled in main handler)
+    // 2. ABAC: Policy-level attribute-based access control
+    let abacAllowed = true;
+    if (resource === "Article" && resourceId && action === "read") {
+      try {
+        // For premium content access, check against article attributes
+
+        // Ensure database connection
+        if (!mongoose.connection.readyState) {
+          await mongoose.connect(process.env.MONGODB_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+          });
+        }
+
+        const article = await Article.findById(resourceId);
+        if (article?.category === "premium") {
+          // Policy-level ABAC: Check if user can access premium content
+          abacAllowed = await permit.check(user.userId, "read", {
+            type: "Article",
+            key: "Article",
+            attributes: { category: "premium" },
+          });
+
+          console.log("📊 ABAC Result (premium content):", abacAllowed);
+
+          if (!abacAllowed) {
+            console.log(
+              `🚫 ABAC denied: User ${user.userId} cannot access premium content`,
+            );
+            throw new Error("Forbidden - Premium subscription required");
+          }
+        }
+      } catch (dbError) {
+        console.error("Database error in ABAC check:", dbError);
+        // Fail securely on database errors
+        if (dbError.message.includes("Forbidden")) throw dbError;
+        throw new Error("Forbidden");
+      }
+    }
+
+    // ABAC context for application-level decisions (rate limiting)
     const abacContext = {
       subscription_tier: user.subscription_tier || "free",
       user_role: user.role,
     };
-    console.log("📊 ABAC Context:", abacContext);
+    console.log("📊 ABAC Context for rate limiting:", abacContext);
 
     // 3. Basic ReBAC: For update/delete operations, add ownership context
     let rebacContext = {};
@@ -103,16 +145,27 @@ function extractResourceInfo(event) {
   if (methodArn) {
     const parts = methodArn.split("/");
     method = parts[parts.length - 2] || method;
-    resourcePath = "/" + (parts[parts.length - 1] || "").replace("*", "");
   }
 
   // Map resource paths to Permit.io resources
-  let resource = "Article"; // default
+  let resource = {
+    type: "Article",
+    key: "Article",
+    attributes: {
+      category: "free",
+    },
+  }; // default
   let resourceId = null;
+  const pathParts = resourcePath.split("/");
 
   if (resourcePath.includes("articles")) {
-    resource = "Article";
-    const pathParts = resourcePath.split("/");
+    resource = {
+      type: "Article",
+      key: "Article",
+      attributes: {
+        category: "free",
+      },
+    };
     const articleIndex = pathParts.indexOf("articles");
     if (
       articleIndex >= 0 &&
@@ -178,7 +231,7 @@ function generatePolicy(principalId, effect, resource, context = {}) {
         Object.entries(context).map(([key, value]) => [
           key,
           String(value || ""),
-        ])
+        ]),
       ),
     },
   };
